@@ -1,4 +1,4 @@
-OvS with added security functionalities:
+**OvS** with added security functionalities:
   1. Item SYN sketch block -> mitigate SYN repeat < 1s and SYN random flood
   2. Item Conditional add_blocking_flow -> mitigate SYN repeat > 1s flood 
   3. Item new OvS to controller asynchronous message -> To inform controller of SYN flood occurence
