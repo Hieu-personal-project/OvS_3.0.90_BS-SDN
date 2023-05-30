@@ -10,3 +10,9 @@
 
 <br>
 **BS-SDN** uses probabilistic data structure call Count-min Sketch and leverage bit-marking algorithm to mitigate SYN flood
+
+<br>
+<br>
+
+
+![h6_cms](https://github.com/Hieu-personal-project/OvS_3.0.9_BS-SDN/assets/43841523/2f04d36f-6e34-4b00-85b7-e34b3beb9d13)
