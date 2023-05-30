@@ -104,6 +104,7 @@ xlate_push_stats_entry(struct xc_entry *entry,
                                         ? 0 : stats->n_packets);
         break;
     case XC_RULE:
+        // rule_dpif_credit_stats(entry->rule, stats, offloaded, false, NULL, 200);
         rule_dpif_credit_stats(entry->rule, stats, offloaded);
         break;
     case XC_BOND:

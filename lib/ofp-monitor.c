@@ -1391,6 +1391,14 @@ ofputil_encode_requestforward(const struct ofputil_requestforward *rf,
     return outer;
 }
 
+// struct ofpbuf *
+// ofputil_encode_anomaly_detection(enum ofputil_protocol protocol)
+// {
+//     enum ofp_version ofp_version = ofputil_protocol_to_ofp_version(protocol);
+//     struct ofpbuf *buffer = ofpraw_alloc_xid(OFPRAW_OFPT_ANOMALY_DETECTION, ofp_version, htonl(0), 1024);
+//     return buffer;
+// }
+
 /* Decodes OFPT_REQUESTFORWARD message 'outer'.  On success, puts the decoded
  * form into '*rf' and returns 0, and the caller is later responsible for
  * freeing the content of 'rf', with ofputil_destroy_requestforward(rf).  On

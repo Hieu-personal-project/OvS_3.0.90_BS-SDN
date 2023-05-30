@@ -2082,4 +2082,8 @@ ofproto_get_tun_tab(const struct ofproto *ofproto)
     return ovsrcu_get(struct tun_table *, &ofproto->metadata_tab);
 }
 
+//
+void ofproto_add_flow_modified(struct ofproto *ofproto, const struct match *match, int priority, const struct ofpact *ofpacts, size_t ofpacts_len) OVS_EXCLUDED(ofproto_mutex);
+//
+
 #endif /* ofproto/ofproto-provider.h */

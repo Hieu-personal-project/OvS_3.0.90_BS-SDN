@@ -238,4 +238,11 @@ void xlate_set_support(const struct ofproto_dpif *,
 void xlate_txn_start(void);
 void xlate_txn_commit(void);
 
+//
+void add_blocking_flow(struct xlate_ctx *ctx)
+    OVS_EXCLUDED(ofproto_mutex);
+
+void send_blocking_flow(struct xlate_ctx *ctx);
+//
+
 #endif /* ofproto-dpif-xlate.h */

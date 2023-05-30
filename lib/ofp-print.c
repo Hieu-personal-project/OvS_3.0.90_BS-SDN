@@ -1184,6 +1184,10 @@ ofp_to_string__(const struct ofp_header *oh,
 
     case OFPTYPE_CT_FLUSH_ZONE:
         return ofp_print_nxt_ct_flush_zone(string, ofpmsg_body(oh));
+
+    /*added for supporting*/
+    // case OFPTYPE_ANOMALY_DETECTION:
+    //     break;
     }
 
     return 0;

@@ -108,6 +108,15 @@ struct rule_dpif *rule_dpif_lookup_from_table(struct ofproto_dpif *,
 void rule_dpif_credit_stats(struct rule_dpif *,
                             const struct dpif_flow_stats *, bool);
 
+//
+// void rule_dpif_credit_stats(struct rule_dpif *,
+//                             const struct dpif_flow_stats *, bool, bool tbl2, struct xlate_ctx *ctx, uint8_t counter);
+
+//Hieu
+void rule_dpif_credit_stats_mod(struct rule_dpif *,
+                            const struct dpif_flow_stats *, bool, struct xlate_ctx *ctx);
+//Hieu                           
+
 void rule_set_recirc_id(struct rule *, uint32_t id);
 
 /* Returns true if 'rule' is an internal rule, false otherwise. */

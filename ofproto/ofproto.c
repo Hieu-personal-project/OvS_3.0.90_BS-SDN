@@ -2297,6 +2297,76 @@ ofproto_add_flow(struct ofproto *ofproto, const struct match *match,
     }
 }
 
+//Mod
+static void
+flow_mod_init_modified(struct ofputil_flow_mod *fm,
+              const struct match *match, int priority,
+              const struct ofpact *ofpacts, size_t ofpacts_len,
+              enum ofp_flow_mod_command command)
+{
+    *fm = (struct ofputil_flow_mod) {
+        .priority = priority,
+        .table_id = 1,
+        .command = command,
+        // .idle_timeout = 5,
+        .buffer_id = UINT32_MAX,
+        .out_port = OFPP_ANY,
+        .out_group = OFPG_ANY,
+        .ofpacts = CONST_CAST(struct ofpact *, ofpacts),
+        .ofpacts_len = ofpacts_len,
+    };
+    minimatch_init(&fm->match, match);
+}
+
+static int
+simple_flow_mod_modified(struct ofproto *ofproto,
+                const struct match *match, int priority,
+                const struct ofpact *ofpacts, size_t ofpacts_len,
+                enum ofp_flow_mod_command command)
+{
+    struct ofputil_flow_mod fm;
+    flow_mod_init_modified(&fm, match, priority, ofpacts, ofpacts_len, command);
+    enum ofperr error = handle_flow_mod__(ofproto, &fm, NULL);
+    minimatch_destroy(&fm.match);
+    return error;
+}
+
+void
+ofproto_add_flow_modified(struct ofproto *ofproto, const struct match *match,
+                 int priority,
+                 const struct ofpact *ofpacts, size_t ofpacts_len)
+    OVS_EXCLUDED(ofproto_mutex)
+{
+    const struct rule *rule;
+    bool must_add;
+
+    /* First do a cheap check whether the rule we're looking for already exists
+     * with the actions that we want.  If it does, then we're done. */
+    //Hieu
+    rule = rule_from_cls_rule(classifier_find_match_exactly(
+                                  &ofproto->tables[1].cls, match, priority,
+                                  OVS_VERSION_MAX));
+    if (rule) {
+        const struct rule_actions *actions = rule_get_actions(rule);
+        must_add = !ofpacts_equal(actions->ofpacts, actions->ofpacts_len,
+                                  ofpacts, ofpacts_len);
+    } else {
+        must_add = true;
+    }
+
+    // /* If there's no such rule or the rule doesn't have the actions we want,
+    //  * fall back to a executing a full flow mod.  We can't optimize this at
+    //  * all because we didn't take enough locks above to ensure that the flow
+    //  * table didn't already change beneath us.  */
+    if (must_add) {
+        simple_flow_mod_modified(ofproto, match, priority, ofpacts, ofpacts_len,
+                        OFPFC_MODIFY_STRICT);
+    }
+    //Hieu
+}
+//Mod
+
+
 /* Executes the flow modification specified in 'fm'.  Returns 0 on success, or
  * an OFPERR_* OpenFlow error code on failure.
  *
@@ -8822,6 +8892,8 @@ handle_single_part_openflow(struct ofconn *ofconn, const struct ofp_header *oh,
     case OFPTYPE_NXT_TLV_TABLE_REPLY:
     case OFPTYPE_IPFIX_BRIDGE_STATS_REPLY:
     case OFPTYPE_IPFIX_FLOW_STATS_REPLY:
+    /*added for supporting*/
+    // case OFPTYPE_ANOMALY_DETECTION:
     default:
         if (ofpmsg_is_stat_request(oh)) {
             return OFPERR_OFPBRC_BAD_STAT;

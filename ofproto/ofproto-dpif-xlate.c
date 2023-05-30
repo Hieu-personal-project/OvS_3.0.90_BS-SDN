@@ -67,6 +67,11 @@
 #include "util.h"
 #include "uuid.h"
 
+//
+#include "openvswitch/ofp-match.h"
+#include "openvswitch/ofp-monitor.h"
+//
+
 COVERAGE_DEFINE(xlate_actions);
 COVERAGE_DEFINE(xlate_actions_oversize);
 COVERAGE_DEFINE(xlate_actions_too_many_output);
@@ -4397,17 +4402,30 @@ compose_output_action(struct xlate_ctx *ctx, ofp_port_t ofp_port,
                             is_last_action, truncate);
 }
 
+// static void
+// xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule,
+//                   bool deepens, bool is_last_action,
+//                   xlate_actions_handler *actions_xlator, bool tbl2, uint8_t counter)
+
 static void
 xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule,
                   bool deepens, bool is_last_action,
-                  xlate_actions_handler *actions_xlator)
+                  xlate_actions_handler *actions_xlator, bool tbl2)
 {
     struct rule_dpif *old_rule = ctx->rule;
     ovs_be64 old_cookie = ctx->rule_cookie;
     const struct rule_actions *actions;
 
     if (ctx->xin->resubmit_stats) {
+        // rule_dpif_credit_stats(rule, ctx->xin->resubmit_stats, false, tbl2, ctx, counter);
         rule_dpif_credit_stats(rule, ctx->xin->resubmit_stats, false);
+        //Hieu
+
+        // if(tbl2){
+        //     rule_dpif_credit_stats_mod(rule, ctx->xin->resubmit_stats, false, ctx);
+        //     // tbl2 = false;
+        // }
+        //Hieu
     }
 
     ctx->resubmits++;
@@ -4415,9 +4433,27 @@ xlate_recursively(struct xlate_ctx *ctx, struct rule_dpif *rule,
     ctx->depth += deepens;
     ctx->rule = rule;
     ctx->rule_cookie = rule->up.flow_cookie;
-    actions = rule_get_actions(&rule->up);
-    actions_xlator(actions->ofpacts, actions->ofpacts_len, ctx,
+
+    //Hieu
+    if(tbl2)
+    {
+        struct ofpbuf ofpacts;
+        ofpbuf_init(&ofpacts, sizeof(struct ofpact_output));
+        ofpacts.size = 0;
+        actions_xlator(ofpacts.data, ofpacts.size, ctx,
                    is_last_action, false);
+        ofpbuf_uninit(&ofpacts);
+    }
+    else{
+        actions = rule_get_actions(&rule->up);
+        actions_xlator(actions->ofpacts, actions->ofpacts_len, ctx,
+                   is_last_action, false);
+    }
+    //Hieu
+    // actions = rule_get_actions(&rule->up);
+    // actions_xlator(actions->ofpacts, actions->ofpacts_len, ctx,
+    //                is_last_action, false);
+
     ctx->rule_cookie = old_cookie;
     ctx->rule = old_rule;
     ctx->depth -= deepens;
@@ -4489,6 +4525,148 @@ tuple_swap(struct flow *flow, struct flow_wildcards *wc)
     tuple_swap_flow(&wc->masks, ipv4);
 }
 
+// void send_blocking_flow(struct xlate_ctx *ctx){
+//     enum ofputil_protocol protocol = 256;//ofconn_get_protocol(ofconn);
+//     struct ofpbuf *msg = ofputil_encode_anomaly_detection(protocol);
+//     size_t a = 50;  // 10 + 10 + 3 + 5 + 5 = 35
+//     uint32_t ip_src = ntohl(ctx->base_flow.nw_src), ip_dst = ntohl(ctx->base_flow.nw_dst);
+//     uint8_t nw_proto = ctx->base_flow.nw_proto;
+//     uint16_t tp_src = ntohs(ctx->base_flow.tp_src), tp_dst = ntohs(ctx->base_flow.tp_dst);
+//     // uint16_t tp_src = ctx->base_flow.tp_src, tp_dst = ctx->base_flow.tp_dst;
+//     char str[50], str1[12], str2[12], str3[5], str4[7], str5[7];
+//     snprintf(str1, 12, "%u", ip_src);
+//     snprintf(str2, 12, "%u", ip_dst);
+//     snprintf(str3, 5, "%u", nw_proto);
+//     snprintf(str4, 7, "%u", tp_src);
+//     snprintf(str5, 7, "%u", tp_dst);
+//     str[49] = '\0';
+//     str1[11] = '\0';
+//     str2[11] = '\0';
+//     str3[4] = '\0';
+//     str4[6] = '\0';
+//     str5[6] = '\0';
+//     strcpy(str, str1);
+//     strcat(str, ",");
+//     strcat(str, str2);
+//     strcat(str, ",");
+//     strcat(str, str3);
+//     strcat(str, ",");
+//     strcat(str, str4);
+//     strcat(str, ",");
+//     strcat(str, str5);
+//     // str[49] = '\0';
+
+//     // memset(&msg, 0, sizeof(msg));
+//     ofpbuf_put(msg, str, a);
+//     // ofproto_dpif_cast();
+//     // struct ofproto_dpif *ofproto = ofproto_dpif_cast(ofproto_);
+//     // connmgr_send_anomaly_detection(ctx->xin->ofproto.up->connmgr, msg);
+//     connmgr_send_anomaly_detection(ctx->xin->ofproto->up.connmgr, msg);
+// }
+
+void add_blocking_flow(struct xlate_ctx *ctx)
+    OVS_EXCLUDED(ofproto_mutex)
+{
+    // uint32_t ofpfw=0;
+    struct ofp10_match tmatch_10;
+    memset(&tmatch_10, 0x0, sizeof(struct ofp10_match));
+
+    // setup cac truong can thiet cho openflow 10
+    //  tmatch_10.wildcards = OFPFW10_NW_PROTO | OFPFW10_DL_SRC | OFPFW10_DL_DST | OFPFW10_NW_SRC_ALL | OFPFW10_NW_DST_ALL | OFPFW10_TP_SRC | OFPFW10_TP_DST;
+    tmatch_10.wildcards = htonl(OFPFW10_DL_VLAN) | htonl(OFPFW10_DL_VLAN_PCP) | htonl(OFPFW10_NW_TOS);  //in-use
+
+    // ofpfw = OFPFW10_DL_VLAN | OFPFW10_DL_VLAN_PCP | OFPFW10_NW_TOS;
+
+    tmatch_10.dl_vlan = htons(0);
+    tmatch_10.dl_vlan_pcp = 0;
+    //new
+    // ofpfw |= OFPFW10_DL_TYPE;
+    // ofpfw |= OFPFW10_DL_SRC;
+    // ofpfw |= OFPFW10_DL_DST;
+
+    tmatch_10.wildcards |= htonl(OFPFW10_DL_SRC);
+    tmatch_10.wildcards |= htonl(OFPFW10_DL_DST);
+
+    //new
+    tmatch_10.dl_src = ctx->base_flow.dl_src;                                                   //tflow.dl_src;
+    tmatch_10.dl_dst = ctx->base_flow.dl_dst;                                                   //tflow.dl_dst;
+    tmatch_10.dl_type = ofputil_dl_type_to_openflow(ctx->base_flow.dl_type);
+    tmatch_10.nw_src = ctx->base_flow.nw_src;
+    tmatch_10.nw_dst = ctx->base_flow.nw_dst;
+    //new
+
+    tmatch_10.wildcards |= htonl(OFPFW10_NW_DST_MASK);
+
+    // ofpfw |= OFPFW10_NW_DST_SHIFT;
+    //new
+    tmatch_10.nw_tos = ctx->base_flow.nw_tos & IP_DSCP_MASK;
+    // ofpfw |= OFPFW10_NW_TOS;
+    tmatch_10.nw_proto = ctx->base_flow.nw_proto;
+    tmatch_10.tp_src = ctx->base_flow.tp_src;
+    tmatch_10.tp_dst = ctx->base_flow.tp_dst;
+    
+    memset(tmatch_10.pad1, '\0', sizeof tmatch_10.pad1);
+    memset(tmatch_10.pad2, '\0', sizeof tmatch_10.pad2);
+    // ofpfw |= OFPFW10_TP_DST;
+
+    tmatch_10.wildcards |= htonl(OFPFW10_TP_DST);
+
+    // tmatch_10.wildcards = htonl(ofpfw);
+    tmatch_10.in_port = htons(1);
+
+    // if(ntohl(tflow.nw_src) == 167772161 ){
+    //     tmatch_10.wildcards |= htonl(OFPFW10_TP_SRC);
+    //     tmatch_10.in_port = htons(1);
+    // }
+    // else if (ntohl(tflow.nw_src) == 167772162){
+    //     tmatch_10.wildcards |= htonl(OFPFW10_TP_SRC);
+    //     tmatch_10.in_port = htons(2);
+    // }
+
+    // struct flow_wildcards *tmask = (struct flow_wildcards*)malloc(sizeof(struct flow_wildcards));
+    // memset(&tmask->masks, 0x0, sizeof tmask->masks);
+
+    // // bind mask voi IP address vs TCP port
+    // WC_MASK_FIELD(tmask,nw_dst);  WC_MASK_FIELD(tmask,nw_src);
+    // WC_MASK_FIELD(tmask,tp_dst);  WC_MASK_FIELD(tmask,tp_src);
+
+    // tao 1 match tieu chuan
+    struct match tmatch;
+
+    // extract tmatch tu tmatch_10
+    ofputil_match_from_ofp10_match(&tmatch_10, &tmatch);
+
+    // match_init(tmatch,&tflow,tmask); // lay cac truong duoc ung voi mask
+
+    // match_wc_init(tmatch,&tflow);
+    struct ofpbuf ofpacts; // buffer
+
+    ofpbuf_init(&ofpacts, sizeof(struct ofpact_output));
+    ofpacts.size = 0;
+
+
+    // struct ofputil_phy_port out_port;
+
+    // strcpy(out_port.name, "s1-eth1");
+    // ..............
+    // if(ntohl(tflow.nw_src) == 167772161 ){
+    //     ofpact_put_OUTPUT(&ofpacts)->port = 2; // chuyen goi ra port ung voi L2/L3
+    // }
+    // else if (ntohl(tflow.nw_src) == 167772162){
+    //     ofpact_put_OUTPUT(&ofpacts)->port = 1;
+    // }
+
+    ofproto_add_flow_modified(&(ctx->xbridge->ofproto->up), &tmatch, 10, ofpacts.data,
+                     ofpacts.size);
+
+    ofpbuf_uninit(&ofpacts);
+    // return 0;
+}
+
+//
+// uint8_t counter = 0;
+//
+
 static void
 xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
                    bool may_packet_in, bool honor_table_miss,
@@ -4543,10 +4721,35 @@ xlate_table_action(struct xlate_ctx *ctx, ofp_port_t in_port, uint8_t table_id,
                 ofproto_rule_ref(&rule->up);
             }
 
+            bool tbl2 = false;
+            // uint8_t counter = 0;
+
+            if(ctx->table_id == 2 && rule->up.cr.priority != 0 && ctx->xin->resubmit_stats){
+                tbl2 = true;
+                // add_blocking_flow(ctx);
+                // counter++;
+                // FILE* fp;
+                // fp=fopen("/home/hollahieu/Desktop/packet_in_rule.log","a");
+                // fprintf(fp, "called!\n");
+                // fclose(fp);
+                // ofproto_rule_ref(&rule->up);
+            }
+            //Hieu
+
             struct ovs_list *old_trace = ctx->xin->trace;
             xlate_report_table(ctx, rule, table_id);
             xlate_recursively(ctx, rule, table_id <= old_table_id,
-                              is_last_action, xlator);
+                            is_last_action, xlator, tbl2);
+
+            // xlate_recursively(ctx, rule, table_id <= old_table_id,
+            //                   is_last_action, xlator, tbl2, counter);
+
+            //Hieu
+            // if(tbl2){
+            //     ofproto_rule_unref(&rule->up);
+            // }
+            //Hieu
+
             ctx->xin->trace = old_trace;
         }
 
@@ -7894,6 +8097,7 @@ xlate_actions(struct xlate_in *xin, struct xlate_out *xout)
             ctx.xin->resubmit_stats, &ctx.table_id,
             flow->in_port.ofp_port, true, true, ctx.xin->xcache);
         if (ctx.xin->resubmit_stats) {
+            // rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats, false, false, NULL, 200);
             rule_dpif_credit_stats(ctx.rule, ctx.xin->resubmit_stats, false);
         }
         if (ctx.xin->xcache) {

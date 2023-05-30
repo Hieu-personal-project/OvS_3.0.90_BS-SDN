@@ -64,7 +64,8 @@ extern "C" {
  * If dp_netdev_input is not called from a pmd thread, a mutex is used.
  */
 
-#define EM_FLOW_HASH_SHIFT 13
+// #define EM_FLOW_HASH_SHIFT 13
+#define EM_FLOW_HASH_SHIFT 31
 #define EM_FLOW_HASH_ENTRIES (1u << EM_FLOW_HASH_SHIFT)
 #define EM_FLOW_HASH_MASK (EM_FLOW_HASH_ENTRIES - 1)
 #define EM_FLOW_HASH_SEGS 2

@@ -43,6 +43,681 @@
 #include "timeval.h"
 #include "util.h"
 
+/*Hieu*/
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdarg.h>
+#include <limits.h>
+#include <inttypes.h>       /* PRIu64 */
+#include <math.h>
+#include<unistd.h>
+#include <sys/syscall.h>
+#include<stdbool.h>
+#include "dp-packet.h"
+
+#define STR_LENGTH 20
+#define LOG_TWO 0.6931471805599453
+
+
+/* private functions */
+static int __setup_cms(CountMinSketch* cms, uint32_t width, uint32_t depth, double error_rate, double confidence, cms_hash_function hash_function);
+static void __write_to_file(CountMinSketch* cms, FILE *fp, short on_disk);
+static void __read_from_file(CountMinSketch* cms, FILE *fp, short on_disk, const char* filename);
+static void __merge_cms(CountMinSketch* base, int num_sketches, va_list* args);
+static int __validate_merge(CountMinSketch* base, int num_sketches, va_list* args);
+static uint64_t* __default_hash(unsigned int num_hashes, const char* key);
+static uint64_t __fnv_1a(const char* key, int seed);
+static int __compare(const void * a, const void * b);
+static int32_t __safe_add(int32_t a, uint32_t b);
+static int32_t __safe_sub(int32_t a, uint32_t b);
+static int32_t __safe_add_2(int32_t a, int32_t b);
+
+// Compatibility with non-clang compilers
+#ifndef __has_builtin
+    #define __has_builtin(x) 0
+#endif
+
+int cms_init_optimal_alt(CountMinSketch* cms, double error_rate, double confidence, cms_hash_function hash_function) {
+    /* https://cs.stackexchange.com/q/44803 */
+    if (error_rate < 0 || confidence < 0) {
+        fprintf(stderr, "Unable to initialize the count-min sketch since both error_rate and confidence must be positive!\n");
+        return CMS_ERROR;
+    }
+    uint32_t width = ceil(2 / error_rate);
+    uint32_t depth = ceil((-1 * log(1 - confidence)) / LOG_TWO);
+    return __setup_cms(cms, width, depth, error_rate, confidence, hash_function);
+}
+
+int cms_init_alt(CountMinSketch* cms, uint32_t width, uint32_t depth, cms_hash_function hash_function) {
+    if (depth < 1 || width < 1) {
+        fprintf(stderr, "Unable to initialize the count-min sketch since either width or depth is 0!\n");
+        return CMS_ERROR;
+    }
+    double confidence = 1 - (1 / pow(2, depth));
+    double error_rate = 2 / (double) width;
+    return __setup_cms(cms, width, depth, error_rate, confidence, hash_function);
+}
+
+int cms_destroy(CountMinSketch* cms) {
+    free(cms->bins);
+    cms->width = 0;
+    cms->depth = 0;
+    cms->confidence = 0.0;
+    cms->error_rate = 0.0;
+    cms->elements_added = 0;
+    cms->hash_function = NULL;
+    cms->bins = NULL;
+
+    return CMS_SUCCESS;
+}
+
+int cms_clear(CountMinSketch* cms) {
+    uint32_t i, j = cms->width * cms->depth;
+    for (i = 0; i < j; ++i) {
+        cms->bins[i] = 0;
+    }
+    cms->elements_added = 0;
+    return CMS_SUCCESS;
+}
+
+// int32_t cms_add_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint32_t x) {
+bool cms_add_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, uint32_t x) {
+    if (num_hashes < cms->depth) {
+        fprintf(stderr, "Insufficient hashes to complete the addition of the element to the count-min sketch!");
+        return CMS_ERROR;
+    }
+    int num_add = INT32_MAX;
+    uint64_t bin[3] = {0}; //since depth = 10
+    // /*Hieu*/
+    // bool temp = true;
+    // /*Hieu*/
+    for (unsigned int i = 0; i < cms->depth; ++i) {
+        /*uint64_t*/ bin[i] = (hashes[i] % cms->width) + (i * cms->width);
+        // /*Hieu*/
+        // cms->bool_array[bin] = 1;
+        cms->bool_array[bin[i]] = true;
+        // /*Hieu*/
+        cms->bins[bin[i]] = __safe_add(cms->bins[bin[i]], x);
+        /* currently a standard min strategy */
+        if (cms->bins[bin[i]] < num_add) {
+            num_add = cms->bins[bin[i]];
+            /*Hieu*/
+            // if(num_add != 1){
+            //     cms->bool_array[bin] = false;
+            //     temp = false;
+            // }
+
+            // if(num_add == 1){
+            //     cms->bool_array[bin] = true;
+            //     temp = true;
+            // }
+            // else{
+            //     cms->bool_array[bin] = false;
+            //     temp = false;
+            // }
+            /*Hieu*/
+
+        }
+    }
+
+    if(num_add != 1){
+        for (unsigned int i = 0; i < 3; ++i) {
+            cms->bool_array[bin[i]] = false;
+            // temp = false;
+        }
+    }
+    
+    cms->elements_added += x;
+    return num_add;
+
+    // /*Hieu*/
+    // return temp;
+    // /*Hieu*/
+}
+
+// int32_t cms_add_inc(CountMinSketch* cms, const char* key, unsigned int x) {
+bool cms_add_inc(CountMinSketch* cms, const char* key, unsigned int x) {
+    uint64_t* hashes = cms_get_hashes(cms, key);
+    // int32_t num_add = cms_add_inc_alt(cms, hashes, cms->depth, x);
+    bool bool_array2 = cms_check_min(cms, key);
+    bool num_add = cms_add_inc_alt(cms, hashes, cms->depth, x);  //Hieu
+    free(hashes);
+    // return num_add;
+    return bool_array2;
+}
+
+int32_t cms_remove_inc_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes, unsigned int x) {
+    if (num_hashes < cms->depth) {
+        fprintf(stderr, "Insufficient hashes to complete the removal of the element to the count-min sketch!");
+        return CMS_ERROR;
+    }
+    int32_t num_add = INT32_MAX;
+    for (unsigned int i = 0; i < cms->depth; ++i) {
+        uint32_t bin = (hashes[i] % cms->width) + (i * cms->width);
+        cms->bins[bin] = __safe_sub(cms->bins[bin], x);
+        if (cms->bins[bin] < num_add) {
+            num_add = cms->bins[bin];
+        }
+    }
+    cms->elements_added -= x;
+    return num_add;
+}
+
+int32_t cms_remove_inc(CountMinSketch* cms, const char* key, uint32_t x) {
+    uint64_t* hashes = cms_get_hashes(cms, key);
+    int32_t num_add = cms_remove_inc_alt(cms, hashes, cms->depth, x);
+    free(hashes);
+    return num_add;
+}
+
+// int32_t cms_check_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+bool cms_check_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) { //modify check to check bloom filter 2
+    if (num_hashes < cms->depth) {
+        fprintf(stderr, "Insufficient hashes to complete the min lookup of the element to the count-min sketch!");
+        return CMS_ERROR;
+    }
+    // int32_t num_add = INT32_MAX;
+    // bool temp = true;
+    for (unsigned int i = 0; i < cms->depth; ++i) {
+        uint32_t bin = (hashes[i] % cms->width) + (i * cms->width);
+        // if (cms->bins[bin] < num_add) {
+        //     num_add = cms->bins[bin];
+        //     // if(num_add != 1){
+        //     //     temp = false;
+        //     // }
+        // }
+
+        if (cms->bool_array2[bin] == false){
+            // temp = false;
+            return false;
+        }
+    }
+    return true;
+    // return num_add;
+    // return temp;
+
+}
+
+// int32_t cms_check(CountMinSketch* cms, const char* key) {
+bool cms_check(CountMinSketch* cms, const char* key) {
+    uint64_t* hashes = cms_get_hashes(cms, key);
+    // int32_t num_add = cms_check_alt(cms, hashes, cms->depth);
+    bool num_add = cms_check_alt(cms, hashes, cms->depth);
+    free(hashes);
+    return num_add;
+}
+
+int32_t cms_check_mean_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+    if (num_hashes < cms->depth) {
+        fprintf(stderr, "Insufficient hashes to complete the mean lookup of the element to the count-min sketch!");
+        return CMS_ERROR;
+    }
+    int32_t num_add = 0;
+    for (unsigned int i = 0; i < cms->depth; ++i) {
+        uint32_t bin = (hashes[i] % cms->width) + (i * cms->width);
+        num_add += cms->bins[bin];
+    }
+    return num_add / cms->depth;
+}
+
+int32_t cms_check_mean(CountMinSketch* cms, const char* key) {
+    uint64_t* hashes = cms_get_hashes(cms, key);
+    int32_t num_add = cms_check_mean_alt(cms, hashes, cms->depth);
+    free(hashes);
+    return num_add;
+}
+
+int32_t cms_check_mean_min_alt(CountMinSketch* cms, uint64_t* hashes, unsigned int num_hashes) {
+    if (num_hashes < cms->depth) {
+        fprintf(stderr, "Insufficient hashes to complete the mean-min lookup of the element to the count-min sketch!");
+        return CMS_ERROR;
+    }
+    int32_t num_add = 0;
+    int64_t* mean_min_values = (int64_t*)calloc(cms->depth, sizeof(int64_t));
+    for (unsigned int i = 0; i < cms->depth; ++i) {
+        uint32_t bin = (hashes[i] % cms->width) + (i * cms->width);
+        int32_t val = cms->bins[bin];
+        mean_min_values[i] = val - ((cms->elements_added - val) / (cms->width - 1));
+    }
+    // return the median of the mean_min_value array... need to sort first
+    qsort(mean_min_values, cms->depth, sizeof(int64_t), __compare);
+    int32_t n = cms->depth;
+    if (n % 2 == 0) {
+        num_add = (mean_min_values[n/2] + mean_min_values[n/2 - 1]) / 2;
+    } else {
+        num_add = mean_min_values[n/2];
+    }
+    free(mean_min_values);
+    return num_add;
+}
+
+int32_t cms_check_mean_min(CountMinSketch* cms, const char* key) {
+    uint64_t* hashes = cms_get_hashes(cms, key);
+    int32_t num_add = cms_check_mean_min_alt(cms, hashes, cms->depth);
+    free(hashes);
+    return num_add;
+}
+
+uint64_t* cms_get_hashes_alt(CountMinSketch* cms, unsigned int num_hashes, const char* key) {
+    return cms->hash_function(num_hashes, key);
+}
+
+int cms_export(CountMinSketch* cms, const char* filepath) {
+    FILE *fp;
+    fp = fopen(filepath, "w+b");
+    if (fp == NULL) {
+        fprintf(stderr, "Can't open file %s!\n", filepath);
+        return CMS_ERROR;
+    }
+    __write_to_file(cms, fp, 0);
+    fclose(fp);
+    return CMS_SUCCESS;
+}
+
+int cms_import_alt(CountMinSketch* cms, const char* filepath, cms_hash_function hash_function) {
+    FILE *fp;
+    fp = fopen(filepath, "r+b");
+    if (fp == NULL) {
+        fprintf(stderr, "Can't open file %s!\n", filepath);
+        return CMS_ERROR;
+    }
+    __read_from_file(cms, fp, 0, NULL);
+    cms->hash_function = (hash_function == NULL) ? __default_hash : hash_function;
+    fclose(fp);
+    return CMS_SUCCESS;
+}
+
+int cms_merge(CountMinSketch* cms, int num_sketches, ...) {
+    CountMinSketch* base;
+    va_list ap;
+
+    /* Test compatibility */
+    va_start(ap, num_sketches);
+    int res = __validate_merge(NULL, num_sketches, &ap);
+    va_end(ap);
+
+    if (CMS_ERROR == res)
+        return CMS_ERROR;
+
+    /* Merge */
+    va_start(ap, num_sketches);
+    base = (CountMinSketch *) va_arg(ap, CountMinSketch *);
+    if (CMS_ERROR == __setup_cms(cms, base->width, base->depth, base->error_rate, base->confidence, base->hash_function)) {
+        va_end(ap);
+        return CMS_ERROR;
+    }
+    va_end(ap);
+
+    va_start(ap, num_sketches);
+    __merge_cms(cms, num_sketches, &ap);
+    va_end(ap);
+
+    return CMS_SUCCESS;
+}
+
+int cms_merge_into(CountMinSketch* cms, int num_sketches, ...) {
+    va_list ap;
+
+    /* validate all the count-min sketches are of the same dimensions and hash function */
+    va_start(ap, num_sketches);
+    int res = __validate_merge(cms, num_sketches, &ap);
+    va_end(ap);
+
+    if (CMS_ERROR == res)
+        return CMS_ERROR;
+
+    /* merge */
+    va_start(ap, num_sketches);
+    __merge_cms(cms, num_sketches, &ap);
+    va_end(ap);
+
+    return CMS_SUCCESS;
+}
+
+
+/*******************************************************************************
+*    PRIVATE FUNCTIONS
+*******************************************************************************/
+static int __setup_cms(CountMinSketch* cms, unsigned int width, unsigned int depth, double error_rate, double confidence, cms_hash_function hash_function) {
+    cms->width = width;
+    cms->depth = depth;
+    cms->confidence = confidence;
+    cms->error_rate = error_rate;
+    cms->elements_added = 0;
+    cms->bins = (int32_t*)calloc((width * depth), sizeof(int32_t));
+    cms->bool_array = (bool*)calloc((width * depth), sizeof(bool));
+    cms->bool_array2 = (bool*)calloc((width * depth), sizeof(bool));
+    cms->hash_function = (hash_function == NULL) ? __default_hash : hash_function;
+
+    if (NULL == cms->bins) {
+        // fprintf(stderr, "Failed to allocate u bytes for bins!", ((width * depth) * sizeof(int32_t)));
+        return CMS_ERROR;
+    }
+    return CMS_SUCCESS;
+}
+
+static void __write_to_file(CountMinSketch* cms, FILE *fp, short on_disk) {
+    unsigned long long length = cms->depth * cms->width;
+    if (on_disk == 0) {
+        for (unsigned long long i = 0; i < length; ++i) {
+            fwrite(&cms->bins[i], sizeof(int32_t), 1, fp);
+        }
+    } else {
+        // TODO: decide if this should be done directly on disk or not
+        // will need to write out everything by hand
+        // uint64_t i;
+        // int q = 0;
+        // for (i = 0; i < length; ++i) {
+        //     fwrite(&q, sizeof(int), 1, fp);
+        // }
+    }
+    fwrite(&cms->width, sizeof(int32_t), 1, fp);
+    fwrite(&cms->depth, sizeof(int32_t), 1, fp);
+    fwrite(&cms->elements_added, sizeof(int64_t), 1, fp);
+}
+
+static void __read_from_file(CountMinSketch* cms, FILE *fp, short on_disk, const char* filename) {
+    /* read in the values from the file before getting the sketch itself */
+    int offset = (sizeof(int32_t) * 2) + sizeof(long);
+    fseek(fp, offset * -1, SEEK_END);
+
+    fread(&cms->width, sizeof(int32_t), 1, fp);
+    fread(&cms->depth, sizeof(int32_t), 1, fp);
+    cms->confidence = 1 - (1 / pow(2, cms->depth));
+    cms->error_rate = 2 / (double) cms->width;
+    fread(&cms->elements_added, sizeof(int64_t), 1, fp);
+
+    rewind(fp);
+    size_t length = cms->width * cms->depth;
+    if (on_disk == 0) {
+        cms->bins = (int32_t*)malloc(length * sizeof(int32_t));
+        size_t read = fread(cms->bins, sizeof(int32_t), length, fp);
+        if (read != length) {
+            perror("__read_from_file: ");
+            exit(1);
+        }
+    } else {
+        // TODO: decide if this should be done directly on disk or not
+    }
+}
+
+static void __merge_cms(CountMinSketch* base, int num_sketches, va_list* args) {
+    int i;
+    uint32_t bin, bins = (base->width * base->depth);
+
+    va_list ap;
+    va_copy(ap, *args);
+
+    for (i = 0; i < num_sketches; ++i) {
+        CountMinSketch *individual_cms = va_arg(ap, CountMinSketch *);
+        base->elements_added += individual_cms->elements_added;
+        for (bin = 0; bin < bins; ++bin) {
+            base->bins[bin] = __safe_add_2(base->bins[bin], individual_cms->bins[bin]);
+        }
+    }
+    va_end(ap);
+}
+
+
+static int __validate_merge(CountMinSketch* base, int num_sketches, va_list* args) {
+    int i = 0;
+    va_list ap;
+    va_copy(ap, *args);
+
+    if (base == NULL) {
+        base = (CountMinSketch *) va_arg(ap, CountMinSketch *);
+        ++i;
+    }
+
+    for (/* skip */; i < num_sketches; ++i) {
+        CountMinSketch *individual_cms = va_arg(ap, CountMinSketch *);
+        if (!(base->depth == individual_cms->depth
+            && base->width == individual_cms->width
+            && base->hash_function == individual_cms->hash_function)) {
+
+            fprintf(stderr, "Cannot merge sketches due to incompatible definitions (depth=(%d/%d) width=(%d/%d) hash=(0x%" PRIXPTR "/0x%" PRIXPTR "))",
+                base->depth, individual_cms->depth,
+                base->width, individual_cms->width,
+                (uintptr_t) base->hash_function, (uintptr_t) individual_cms->hash_function);
+            va_end(ap);
+            return CMS_ERROR;
+        }
+    }
+    return CMS_SUCCESS;
+}
+
+//MetroHash
+
+/* NOTE: The caller will free the results */
+static uint64_t* __default_hash(unsigned int num_hashes, const char* str) {
+    uint64_t* results = (uint64_t*)calloc(num_hashes, sizeof(uint64_t));
+    int i;
+    for (i = 0; i < num_hashes; ++i) {
+        results[i] = __fnv_1a(str, i);
+    }
+    return results;
+}
+
+static uint64_t __fnv_1a(const char* key, int seed) {
+    // FNV-1a hash (http://www.isthe.com/chongo/tech/comp/fnv/)
+    int i, len = strlen(key);
+    uint64_t h = 14695981039346656037ULL + (31 * seed); // FNV_OFFSET 64 bit with magic number seed
+    for (i = 0; i < len; ++i){
+            h = h ^ (unsigned char) key[i];
+            h = h * 1099511628211ULL; // FNV_PRIME 64 bit
+    }
+    return h;
+}
+
+
+static int __compare(const void *a, const void *b) {
+  return ( *(int64_t*)a - *(int64_t*)b );
+}
+
+
+static int32_t __safe_add(int32_t a, uint32_t b) {
+    if (a == INT32_MAX || a == INT32_MIN) {
+        return a;
+    }
+
+    /* use the gcc macro if compiling with GCC, otherwise, simple overflow check */
+    int32_t c = 0;
+    #if (__has_builtin(__builtin_add_overflow)) || (defined(__GNUC__) && __GNUC__ >= 5)
+        bool bl = __builtin_add_overflow(a, b, &c);
+        if (bl) {
+            c = INT32_MAX;
+        }
+    #else
+        c = ((int64_t) a + b > INT32_MAX) ? INT32_MAX : (a + b);
+    #endif
+
+    return c;
+}
+
+static int32_t __safe_sub(int32_t a, uint32_t b) {
+    if (a == INT32_MAX || a == INT32_MIN) {
+        return a;
+    }
+
+    /* use the gcc macro if compiling with GCC, otherwise, simple overflow check */
+    int32_t c = 0;
+    #if (__has_builtin(__builtin_sub_overflow)) || (defined(__GNUC__) && __GNUC__ >= 5)
+        bool bl = __builtin_sub_overflow(a, b, &c);
+        if (bl) {
+            c = INT32_MIN;
+        }
+    #else
+        c = ((int64_t) b - a < INT32_MIN) ? INT32_MAX : (a - b);
+    #endif
+
+    return c;
+}
+
+static int32_t __safe_add_2(int32_t a, int32_t b) {
+    if (a == INT32_MAX || a == INT32_MIN) {
+        return a;
+    }
+
+    /* use the gcc macro if compiling with GCC, otherwise, simple overflow check */
+    int64_t c = (int64_t) a + (int64_t) b;
+    if (c <= INT32_MIN)
+        return INT32_MIN;
+    else if (c >= INT32_MAX)
+        return INT32_MAX;
+    return (int32_t) c;
+}
+
+/*Hieu*/
+// int32_t hoc = 0; /*half open connections counter*/
+bool once = false /*once_ = false*/; //none = false;
+pthread_t monitor_tid;
+pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;   //add_cms vs clear_cms
+// pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;   // initial wait for funct
+// pthread_cond_t mgr_ready_cond = PTHREAD_COND_INITIALIZER;
+// pid_t tid_funct;
+bool keepRunning = true, flag = false;
+CountMinSketch cms_obj;
+
+
+// static void* clear_cms(void* param){
+//     CountMinSketch *cms = param;
+//     while(keepRunning){
+//         ovs_mutex_lock(&mutex1);
+//         for(int i=0; i< 1000000*10 ;i++){     //threshold_bins = 1000000*10
+//             if(cms->bool_array[i] == 0){
+//                 cms->bins[i] = 0;
+//             }
+//             else
+//                 cms->bool_array[i] = 0;
+//         }
+//         ovs_mutex_unlock(&mutex1);
+//         if(keepRunning == false){
+//             break;
+//         }
+//         sleep(1);
+//     }
+//     pthread_exit(NULL);
+// }
+
+// typedef struct {
+//     CountMinSketch *cms;
+//     int32_t *res;
+//     char key;
+// } add_to_cms_param;
+
+// static void* add_to_cms(add_to_cms_param* param){
+
+//     ovs_mutex_lock(&mutex1);
+//     *(param->res) = cms_add(*(param->cms), param->key);
+//     ovs_mutex_unlock(&mutex1);
+//     pthread_exit(NULL);
+// }
+
+// static void* add_to_cms(CountMinSketch* cms, int32_t* res, char* key){
+//     ovs_mutex_lock(&mutex1);
+//     *res = cms_add(cms, key);
+//     ovs_mutex_unlock(&mutex1);
+//     pthread_exit(NULL);
+// }
+
+
+// static void execution(CountMinSketch* cms, pid_t x, int32_t* res, char* key)
+static void execution(CountMinSketch* cms, pid_t x, bool* res, char* key)
+{   
+
+    pthread_mutex_lock(&mutex1);
+    if(/*x == tid_funct*/ x != 0){
+        // printf("\nfunct has locks now!");
+        for(int i=0; i< 1000000*3 ;i++){     //threshold_bins = 1000000*10
+            //Hieu_V1
+            // if(cms->bool_array[i] == 0){
+            //     cms->bins[i] = 0;
+            // }
+            // else{
+            //     cms->bool_array[i] = 0;
+            // }
+            //Hieu_V1
+
+            //Hieu_V2
+            if(cms->bool_array2[i] == true){
+                cms->bool_array2[i] = false;
+            }
+
+            if(cms->bool_array[i] == false){  //reset malicious user sending 2 SYNS in the last 1 second
+                cms->bins[i] = 0;
+            }
+            else{                             //considering those users that send only 1 SYN in the last 1 second
+                cms->bool_array2[i] = true;   // set the second bloom filter => save the state of normal users
+                cms->bool_array[i] = false;   // reset normal user counter for the next second
+            }
+            flag = false;
+            //Hieu_V2   
+        }
+    }
+    else{
+        
+        *res = cms_add(cms, key);
+    }
+
+    pthread_mutex_unlock(&mutex1);
+    // FILE *fp;
+    // fp = fopen("/home/hollahieu/Desktop/testfile","a");
+    // fprintf(fp,"C ");
+    // fclose(fp);
+
+    // return NULL;
+}
+
+// typedef struct {
+//     CountMinSketch *cms;
+//     bool* res_check;
+// } param_funct;
+
+void* funct(void *param){
+
+    // int32_t res = 0;
+    // param_funct *args = param;
+    bool res = false;
+    char key = {0};
+    // int c = 0;
+
+    // CountMinSketch* cms = args->cms;
+    CountMinSketch* cms = param;
+
+
+
+    // tid_funct = syscall(__NR_gettid);
+    // tid_funct = pthread_self();
+    // FILE *fp;
+    // fp = fopen("/home/hollahieu/Desktop/tid_funct.log","a");
+    // fprintf(fp,"my tid_fuct = %d", tid_funct);
+    // fclose(fp);
+
+    // sleep(3);
+
+    while(keepRunning){
+        // fp = fopen("/home/hollahieu/Desktop/while.log","a");
+        // fprintf(fp,"%d\n", c);
+        // fclose(fp);
+        flag = true;
+        execution(cms, 1, &res, &key);
+        // execution(args->cms, 1, &res, args->res_check, &key);
+        // flag = false;
+        if(keepRunning == false){
+            break;
+        }
+        // ++c;
+        sleep(1);
+    }
+    // sleep(1);
+    // pthread_mutex_unlock(&mutex1);
+    pthread_exit(NULL);
+}
+
+//Hieu
+
 VLOG_DEFINE_THIS_MODULE(connmgr);
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
 
@@ -252,6 +927,8 @@ connmgr_create(struct ofproto *ofproto,
     mgr->name = xstrdup(name);
     mgr->local_port_name = xstrdup(local_port_name);
 
+    cms_init(&cms_obj, 1000000, 3);    
+
     ovs_list_init(&mgr->conns);
     mgr->primary_election_id = 0;
     mgr->primary_election_id_defined = false;
@@ -306,6 +983,12 @@ void
 connmgr_destroy(struct connmgr *mgr)
     OVS_REQUIRES(ofproto_mutex)
 {
+    //Hieu//
+    cms_destroy(&cms_obj);
+    keepRunning = false;
+    pthread_mutex_destroy(&mutex1);
+    //Hieu//
+
     if (!mgr) {
         return;
     }
@@ -1657,6 +2340,81 @@ connmgr_send_async_msg(struct connmgr *mgr,
 {
     struct ofconn *ofconn;
 
+    bool check = false;
+    struct flow tflow;
+    struct dp_packet* buffer = dp_packet_new(0);
+    dp_packet_use_const(buffer, am->pin.up.base.packet, am->pin.up.base.packet_len);
+
+    flow_extract(buffer, &tflow);
+    dp_packet_delete(buffer);
+
+    if (ntohs(tflow.tcp_flags) == 2 ) { // xu ly goi syn
+
+        bool res = false;
+        // bool res_check = false;
+        // param_funct* param_p; 
+        // param_p = (param_funct*)malloc(sizeof(param_funct));
+        // param_p->cms = &cms_obj;
+        // param_p->res_check = &res_check;
+
+        if(once ==false){
+            
+            // CountMinSketch* point = &(mgr->cms);
+            pthread_attr_t detached_attr;
+            pthread_attr_init(&detached_attr);
+            pthread_attr_setdetachstate(&detached_attr, PTHREAD_CREATE_DETACHED);
+
+            pthread_create(&monitor_tid, &detached_attr, funct, &cms_obj);
+            // pthread_create(&monitor_tid, &detached_attr, funct, (void*) &param_p);
+
+            once = true;
+            pthread_attr_destroy(&detached_attr);
+        }
+        char *message;
+        message = malloc(STR_LENGTH * sizeof(char));
+        sprintf(message,"%x%x",tflow.nw_src,tflow.tp_src);  //20 bytes
+
+        if(flag == true)
+        { 
+            // ;
+            // FILE *fp;   
+            // fp = fopen("/home/fil02/SD_OVS_test/CMS_Filter/testfile","a");
+            // fprintf(fp,"C\n");
+            // fclose(fp);
+            // sleep(0.0000000003);
+            struct timespec tim, tim2;
+            tim.tv_sec = 0;
+            tim.tv_nsec = 1L;
+            if(nanosleep(&tim , &tim2) < 0 ){
+                FILE *fp;   
+                fp = fopen("/home/hollahieu/Desktop/Lab/OVS_collection/nano_sleep","a");
+                fprintf(fp,"F\n");
+                fclose(fp);
+            }
+        }
+
+        execution(&cms_obj, 0, &res, message);
+        // cms_add
+        // add_to_cms
+
+        // if (res == 2 && cms_obj ){
+        if (res == true){
+            check = true;
+            // add_blocking_flow()
+        }
+        else{
+            check = false;
+        }
+
+        free(message);
+        // dp_packet_delete(buffer);
+    }
+
+    else {check = true;}
+
+    if(check == true)
+    {
+
     LIST_FOR_EACH (ofconn, connmgr_node, &mgr->conns) {
         enum ofputil_protocol protocol = ofconn_get_protocol(ofconn);
         if (protocol == OFPUTIL_P_NONE || !rconn_is_connected(ofconn->rconn)
@@ -1678,6 +2436,31 @@ connmgr_send_async_msg(struct connmgr *mgr,
                       msg, &txq);
         do_send_packet_ins(ofconn, &txq);
     }
+    }
+}
+
+/*define connmgr_send_anomaly_detection*/
+void connmgr_send_anomaly_detection(struct connmgr *mgr, struct ofpbuf* msg_new)
+{
+    struct ofconn *ofconn;
+    // FILE *fp;
+    // fp = fopen("/home/iot_team/DATN/OvS-LoOP/result.log","r");
+    LIST_FOR_EACH (ofconn, connmgr_node, &mgr->conns)
+    {
+
+        // enum ofputil_protocol protocol = ofconn_get_protocol(ofconn);
+        // struct ofpbuf *msg = ofputil_encode_anomaly_detection(protocol);
+        // size_t a =8;
+        // ofpbuf_put_hex(msg,readline(fp),*n);
+        // ofpbuf_put(msg,readline(fp),a);
+        // FILE *fp;
+        // fp = fopen("/home/hollahieu/Desktop/msg.log","a");
+        // fprintf(fp, "%p", msg_new->msg);
+        // fclose(fp);
+
+        ofconn_send(ofconn, msg_new, NULL);
+    }
+    // fclose(fp);
 }
 
 static void

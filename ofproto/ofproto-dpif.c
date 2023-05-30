@@ -4261,6 +4261,7 @@ ofproto_dpif_execute_actions__(struct ofproto_dpif *ofproto,
     dpif_flow_stats_extract(flow, packet, time_msec(), &stats);
 
     if (rule) {
+        // rule_dpif_credit_stats(rule, &stats, false, false, NULL, 200);
         rule_dpif_credit_stats(rule, &stats, false);
     }
 
@@ -4344,6 +4345,90 @@ rule_dpif_credit_stats(struct rule_dpif *rule,
     }
     ovs_mutex_unlock(&rule->stats_mutex);
 }
+
+//Hieu
+
+// static void
+// rule_dpif_credit_stats__(struct rule_dpif *rule,
+//                          const struct dpif_flow_stats *stats,
+//                          bool credit_counts, bool offloaded, bool tbl2, struct xlate_ctx *ctx, uint8_t counter)
+//     OVS_REQUIRES(rule->stats_mutex)
+// {
+//     if (credit_counts) {
+//         if (offloaded) {
+//             rule->stats.n_offload_packets += stats->n_packets;
+//             rule->stats.n_offload_bytes += stats->n_bytes;
+//         }
+//         rule->stats.n_packets += stats->n_packets;
+//         rule->stats.n_bytes += stats->n_bytes;
+//     }
+//     if(tbl2 && rule->stats.n_packets >= 1 && counter <= 5){
+//             // Add blocking flows at table 1
+//             add_blocking_flow(ctx);
+//             // send_blocking_flow(ctx);
+//     }
+//     rule->stats.used = MAX(rule->stats.used, stats->used);
+// }
+
+// void
+// rule_dpif_credit_stats(struct rule_dpif *rule,
+//                        const struct dpif_flow_stats *stats, bool offloaded, bool tbl2, struct xlate_ctx *ctx, uint8_t counter)
+// {
+//     ovs_mutex_lock(&rule->stats_mutex);
+//     if (OVS_UNLIKELY(rule->new_rule)) {
+//         ovs_mutex_lock(&rule->new_rule->stats_mutex);
+//         rule_dpif_credit_stats__(rule->new_rule, stats, rule->forward_counts,
+//                                  offloaded, tbl2, ctx, counter);
+//         ovs_mutex_unlock(&rule->new_rule->stats_mutex);
+//     } else {
+//         rule_dpif_credit_stats__(rule, stats, true, offloaded, tbl2, ctx, counter);
+//     }
+//     ovs_mutex_unlock(&rule->stats_mutex);
+// }
+
+// static void
+// rule_dpif_credit_stats_mod__(struct rule_dpif *rule,
+//                          const struct dpif_flow_stats *stats,
+//                          bool credit_counts, bool offloaded, struct xlate_ctx *ctx)
+//     OVS_REQUIRES(rule->stats_mutex)
+// {
+//     // if (credit_counts) {
+//     //     if (offloaded) {
+//             // rule->stats.n_offload_packets += stats->n_packets;
+//             // rule->stats.n_offload_bytes += stats->n_bytes;
+//         // }
+//         // rule->stats.n_packets += stats->n_packets;
+//         // rule->stats.n_bytes += stats->n_bytes;
+//         // FILE* fp;
+//         // fp=fopen("/home/hollahieu/Desktop/n_packets.log","a");
+//         // fprintf(fp, "rule->stats.n_packets = %ld\trule->stats.n_offload_packets=%ld\n", rule->stats.n_packets, rule->stats.n_offload_packets);
+//         // fclose(fp);
+//         if(rule->stats.n_packets >= 1){
+//             // Add blocking flows at table 1
+//             add_blocking_flow(ctx);
+//             // send_blocking_flow(ctx);
+//             //send_async_to_controller
+//         }
+//     // }
+//     // rule->stats.used = MAX(rule->stats.used, stats->used);
+// }
+
+// void
+// rule_dpif_credit_stats_mod(struct rule_dpif *rule,
+//                        const struct dpif_flow_stats *stats, bool offloaded, struct xlate_ctx *ctx)
+// {
+//     ovs_mutex_lock(&rule->stats_mutex);
+//     if (OVS_UNLIKELY(rule->new_rule)) {
+//         ovs_mutex_lock(&rule->new_rule->stats_mutex);
+//         rule_dpif_credit_stats_mod__(rule->new_rule, stats, rule->forward_counts,
+//                                  offloaded, ctx);
+//         ovs_mutex_unlock(&rule->new_rule->stats_mutex);
+//     } else {
+//         rule_dpif_credit_stats_mod__(rule, stats, true, offloaded, ctx);
+//     }
+//     ovs_mutex_unlock(&rule->stats_mutex);
+// }
+//Hieu
 
 /* Sets 'rule''s recirculation id. */
 static void

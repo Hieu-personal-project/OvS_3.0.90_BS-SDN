@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "rconn.h": "c",
+        "*.tcc": "c",
+        "istream": "c",
+        "sstream": "c",
+        "streambuf": "c",
+        "ostream": "c",
+        "typeinfo": "c",
+        "dpif-netdev-private.h": "c"
+    }
+}

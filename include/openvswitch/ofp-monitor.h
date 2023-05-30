@@ -157,6 +157,10 @@ struct ofpbuf *ofputil_encode_requestforward(
     const struct ofputil_requestforward *, enum ofputil_protocol);
 enum ofperr ofputil_decode_requestforward(const struct ofp_header *,
                                           struct ofputil_requestforward *);
+
+/*prototype for ofputil_encode_anomaly_detection*/
+struct ofpbuf *ofputil_encode_anomaly_detection(enum ofputil_protocol);
+
 void ofputil_format_requestforward(struct ds *, enum ofp_version,
                                    const struct ofputil_requestforward *,
                                    const struct ofputil_port_map *,
